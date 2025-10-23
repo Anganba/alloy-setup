@@ -1,0 +1,95 @@
+// ===================================================================
+// Unified Alloy Configuration for a Production Server
+// Sends critical logs and system metrics to your TraeSentinel stack.
+// ===================================================================
+
+// ===================================================================
+// METRICS PIPELINE
+// This section collects system metrics (CPU, memory, disk, etc.)
+// and forwards them to your central Prometheus instance.
+// ===================================================================
+
+prometheus.exporter.unix "local_system" {}
+
+prometheus.scrape "scrape_local_system" {
+  targets    = prometheus.exporter.unix.local_system.targets
+  forward_to = [prometheus.remote_write.traesentinel_prometheus.receiver]
+}
+
+prometheus.remote_write "traesentinel_prometheus" {
+  endpoint {
+    url = "https://prometheus.anganba.me/api/v1/write"
+    basic_auth {
+      // Credentials are now hardcoded directly into the configuration.
+      username = "admin"
+      password = "hellozenex"
+    }
+  }
+}
+
+// ===================================================================
+// LOGGING PIPELINE
+// This section collects multiple types of critical logs from your
+// server's /var/log directory.
+// ===================================================================
+
+// -------------------------------------------------------------------
+// SOURCE 1: Authentication & Security Logs (auth.log)
+// -------------------------------------------------------------------
+local.file_match "auth_logs" {
+  path_targets = [{ "__path__" = "/var/log/auth.log" }]
+}
+
+loki.source.file "read_auth_logs" {
+  targets    = local.file_match.auth_logs.targets
+  forward_to = [loki.write.traesentinel_loki.receiver]
+}
+
+// -------------------------------------------------------------------
+// SOURCE 2: System & Kernel Logs (syslog, kern.log)
+// -------------------------------------------------------------------
+local.file_match "system_logs" {
+  path_targets = [
+    { "__path__" = "/var/log/syslog" },
+    { "__path__" = "/var/log/kern.log" },
+  ]
+}
+
+loki.source.file "read_system_logs" {
+  targets    = local.file_match.system_logs.targets
+  forward_to = [loki.write.traesentinel_loki.receiver]
+}
+
+// -------------------------------------------------------------------
+// SOURCE 3: Nginx Web Server Logs (access.log, error.log)
+// -------------------------------------------------------------------
+local.file_match "nginx_logs" {
+  path_targets = [{ "__path__" = "/var/log/nginx/*.log" }]
+}
+
+loki.source.file "read_nginx_logs" {
+  targets    = local.file_match.nginx_logs.targets
+  forward_to = [loki.write.traesentinel_loki.receiver]
+}
+
+// -------------------------------------------------------------------
+// SOURCE 4: Package Management Logs (dpkg.log)
+// -------------------------------------------------------------------
+local.file_match "dpkg_logs" {
+  path_targets = [{ "__path__" = "/var/log/dpkg.log" }]
+}
+
+loki.source.file "read_dpkg_logs" {
+  targets    = local.file_match.dpkg_logs.targets
+  forward_to = [loki.write.traesentinel_loki.receiver]
+}
+
+// -------------------------------------------------------------------
+// DESTINATION: Your Central Loki Server
+// -------------------------------------------------------------------
+// All the log sources defined above will send their logs here.
+loki.write "traesentinel_loki" {
+  endpoint {
+    url = "https://loki.anganba.me/loki/api/v1/push"
+  }
+}

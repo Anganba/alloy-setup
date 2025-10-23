@@ -1,12 +1,12 @@
 // ===================================================================
 // Unified Alloy Configuration for a Production Server
 // Sends critical logs and system metrics to your TraeSentinel stack.
+//
+// WARNING: Credentials are hardcoded in this file.
 // ===================================================================
 
 // ===================================================================
 // METRICS PIPELINE
-// This section collects system metrics (CPU, memory, disk, etc.)
-// and forwards them to your central Prometheus instance.
 // ===================================================================
 
 prometheus.exporter.unix "local_system" {}
@@ -20,7 +20,6 @@ prometheus.remote_write "traesentinel_prometheus" {
   endpoint {
     url = "https://prometheus.anganba.me/api/v1/write"
     basic_auth {
-      // Credentials are now hardcoded directly into the configuration.
       username = "admin"
       password = "hellozenex"
     }
@@ -29,42 +28,29 @@ prometheus.remote_write "traesentinel_prometheus" {
 
 // ===================================================================
 // LOGGING PIPELINE
-// This section collects multiple types of critical logs from your
-// server's /var/log directory.
 // ===================================================================
 
 // -------------------------------------------------------------------
-// SOURCE 1: Authentication & Security Logs (auth.log)
+// SOURCE 1: Systemd Journal (The "main" system log)
+// This is better than syslog/kern.log/auth.log separately.
+// It collects logs from ALL systemd services.
 // -------------------------------------------------------------------
-local.file_match "auth_logs" {
-  path_targets = [{ "__path__" = "/var/log/auth.log" }]
-}
-
-loki.source.file "read_auth_logs" {
-  targets    = local.file_match.auth_logs.targets
+loki.source.journal "read_journal" {
   forward_to = [loki.write.traesentinel_loki.receiver]
+  labels     = {"job" = "system", "app" = "journald"}
 }
 
-// -------------------------------------------------------------------
-// SOURCE 2: System & Kernel Logs (syslog, kern.log)
-// -------------------------------------------------------------------
-local.file_match "system_logs" {
-  path_targets = [
-    { "__path__" = "/var/log/syslog" },
-    { "__path__" = "/var/log/kern.log" },
-  ]
-}
-
-loki.source.file "read_system_logs" {
-  targets    = local.file_match.system_logs.targets
-  forward_to = [loki.write.traesentinel_loki.receiver]
-}
 
 // -------------------------------------------------------------------
-// SOURCE 3: Nginx Web Server Logs (access.log, error.log)
+// SOURCE 2: Nginx Web Server Logs (with labels)
 // -------------------------------------------------------------------
 local.file_match "nginx_logs" {
-  path_targets = [{ "__path__" = "/var/log/nginx/*.log" }]
+  path_targets = [
+    { "__path__" = "/var/log/nginx/access.log", "job" = "nginx", "app" = "access" },
+    { "__path__" = "/var/log/nginx/error.log",  "job" = "nginx", "app" = "error" },
+    // Add any other nginx logs here, like for other vhosts
+    // { "__path__" = "/var/log/nginx/my-other-site.access.log", "job" = "nginx", "app" = "my-other-site-access" },
+  ]
 }
 
 loki.source.file "read_nginx_logs" {
@@ -73,23 +59,51 @@ loki.source.file "read_nginx_logs" {
 }
 
 // -------------------------------------------------------------------
-// SOURCE 4: Package Management Logs (dpkg.log)
+// SOURCE 3: Security & Other Logs
 // -------------------------------------------------------------------
-local.file_match "dpkg_logs" {
-  path_targets = [{ "__path__" = "/var/log/dpkg.log" }]
+local.file_match "security_logs" {
+  path_targets = [
+    { "__path__" = "/var/log/dpkg.log",    "job" = "system", "app" = "dpkg" },
+    { "__path__" = "/var/log/ufw.log",     "job" = "security", "app" = "firewall" },
+    { "__path__" = "/var/log/fail2ban.log","job" = "security", "app" = "fail2ban" },
+    { "__path__" = "/var/log/cloud-init.log", "job" = "system", "app" = "cloud-init" },
+  ]
 }
 
-loki.source.file "read_dpkg_logs" {
-  targets    = local.file_match.dpkg_logs.targets
+loki.source.file "read_security_logs" {
+  targets    = local.file_match.security_logs.targets
   forward_to = [loki.write.traesentinel_loki.receiver]
 }
 
 // -------------------------------------------------------------------
+// SOURCE 4: Database Logs (Example)
+// Uncomment the one you use
+// -------------------------------------------------------------------
+// local.file_match "database_logs" {
+//   path_targets = [
+//     { "__path__" = "/var/log/mysql/error.log",    "job" = "database", "app" = "mysql" },
+//     { "__path__" = "/var/log/postgresql/*.log",   "job" = "database", "app" = "postgresql" },
+//   ]
+// }
+//
+// loki.source.file "read_database_logs" {
+//   targets    = local.file_match.database_logs.targets
+//   forward_to = [loki.write.traesentinel_loki.receiver]
+// }
+
+
+// -------------------------------------------------------------------
 // DESTINATION: Your Central Loki Server
 // -------------------------------------------------------------------
-// All the log sources defined above will send their logs here.
 loki.write "traesentinel_loki" {
   endpoint {
     url = "https://loki.anganba.me/loki/api/v1/push"
+    
+    // !! CRITICAL FIX !!
+    // Added basic_auth block for Loki
+    basic_auth {
+      username = "admin"
+      password = "hellozenex"
+    }
   }
 }
